@@ -34,7 +34,23 @@ tool_name=$(jq -r '.tool_name // ""' <<< "$input")
 [[ "$tool_name" == "Bash" ]] || exit 0
 
 command=$(jq -r '.tool_input.command // ""' <<< "$input")
-[[ "$command" =~ gh[[:space:]]+pr[[:space:]]+create ]] || exit 0
+
+# Match `gh pr create` only at a shell statement boundary: start of the
+# command string, or immediately after one of `; & | ( {` or newline.
+# Without this anchor, the regex fires on unrelated commands whose arguments
+# happen to quote the literal phrase — e.g. a `git commit` whose message body
+# mentions the phrase in prose, or `grep "gh pr create" README.md`.
+#
+# Backtick is deliberately NOT in the boundary class even though it starts
+# shell command substitution: markdown-style inline-code backticks in commit
+# messages and PR bodies look identical to shell backticks in the raw
+# tool_input.command string, and the latter form is obsolete anyway (Claude
+# uses `$(...)`, which is still caught by `(`).
+#
+# Known limitation: the env-var prefix form (`FOO=bar gh pr create`) is not
+# matched, since `bar ` is whitespace, not a boundary. Accepted trade-off.
+pr_create_re=$'(^|[;&|({\n])[[:space:]]*gh[[:space:]]+pr[[:space:]]+create'
+[[ "$command" =~ $pr_create_re ]] || exit 0
 
 # Escape hatch: Claude has run the review and is re-attempting.
 #
