@@ -110,9 +110,9 @@ echo '{"tool_name":"Bash","tool_input":{"command":"gh pr create --title foo --bo
 
 ### `jq: command not found`
 
-The hook shells out to `jq` to parse the PreToolUse JSON payload and to emit the deny response. With
-`set -euo pipefail` at the top of the script, a missing `jq` causes the hook to exit non-zero and every
-`Bash` tool call will fail until it's installed. Fix it with your package manager:
+The hook uses `jq` to parse the PreToolUse payload and to emit the deny response. Without it,
+`set -euo pipefail` causes the hook to exit non-zero and every `Bash` tool call fails. Install it with
+your package manager:
 
 ```sh
 brew install jq          # macOS
@@ -121,14 +121,18 @@ sudo apt-get install jq  # Debian/Ubuntu
 
 ### `gh pr create --help` is also blocked
 
-The hook matches any command shape of the form `gh pr create` via the regex
-`gh[[:space:]]+pr[[:space:]]+create`, which means `gh pr create --help` trips the same block as a real PR
-creation. That's intentional — the match is deliberately broad so no variant slips through — but it means
-you can't read the help text without the sentinel. Two workarounds:
+The hook's regex matches any `gh pr create` invocation, including `gh pr create --help`. The broad match
+is intentional — no variant should slip through — but it blocks reading help that way.
 
-- Append ` # reviewed` to the help invocation: `gh pr create --help # reviewed`. The shell strips the
-  comment before `gh` sees it, so `--help` behaves normally.
-- Or read the docs on the web: <https://cli.github.com/manual/gh_pr_create>.
+**Do not** reach for the `# reviewed` sentinel here. The sentinel is an honor-system signal that the
+toolkit review has actually run on the staged diff; using it just to unblock `--help` trains both humans
+and agents to treat it as a generic bypass and defeats the purpose of the hook.
+
+Two workarounds:
+
+- Run `gh help pr create`. Same help output; the `help` token between `gh` and `pr` keeps it out of the
+  hook's regex.
+- Read the docs on the web: <https://cli.github.com/manual/gh_pr_create>.
 
 ## Layout
 
