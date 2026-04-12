@@ -1,0 +1,17 @@
+{
+  "_comment": "Single PreToolUse hook that intercepts `gh pr create` and forces a full pr-review-toolkit run before any PR is created. Install the script at $HOME/.claude/hooks/enforce-pr-review.sh and chmod +x it. Merge this `hooks` block into ~/.claude/settings.json (or a project-local .claude/settings.json).",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/enforce-pr-review.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
