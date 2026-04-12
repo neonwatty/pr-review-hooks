@@ -22,9 +22,10 @@ review gate. It's worth understanding what that means before you install it.
   and silently disabling the gate.
 - **Stateless.** No session files, no cross-invocation bookkeeping, no Stop-hook safety net. Drop the
   script and settings block into any repo and it works.
-- **Tested.** `hooks/test.sh` pins 35 regression cases covering every shape the hook is expected to
+- **Tested.** `hooks/test.sh` pins 39 regression cases covering every shape the hook is expected to
   block, allow, or reject — including sentinel misuse, documented known limitations, and the
-  fail-closed internal-error paths. Wired into CI via `.github/workflows/test.yml`.
+  fail-closed internal-error paths (malformed payloads, unexpected `.tool_input.command` types,
+  broken jq). Wired into CI via `.github/workflows/test.yml`.
 
 ### What it does NOT do
 
