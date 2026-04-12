@@ -26,14 +26,41 @@
 # This keeps the hook completely stateless: no session marker, no Stop safety
 # net, no UserPromptSubmit hook, no cross-hook coordination.
 
-set -euo pipefail
+set -uo pipefail
+# Note: NOT `set -e`. We want to catch jq failures (missing binary, bad
+# payload) explicitly so the hook can always emit a proper PreToolUse JSON
+# response instead of crashing halfway through. A non-zero exit from this
+# script is a bug; every code path either exits 0 with no output (allow) or
+# exits 0 with a deny JSON on stdout (block).
+
+# Hardcoded deny JSON for the "internal error" fail-closed path. Uses printf
+# rather than jq because the most likely reason we're in this branch is that
+# jq isn't available. The reason string is plain ASCII with no characters
+# that need JSON escaping, so embedding it literally is safe.
+emit_internal_error_deny() {
+  printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"pr-review hook internal error: could not parse the PreToolUse payload. Most likely cause: jq is not installed on PATH. Install jq (brew install jq / apt-get install jq) and retry. Failing closed as a safety measure so a missing dependency does not silently disable the review gate."}}'
+}
 
 input=$(cat)
 
-tool_name=$(jq -r '.tool_name // ""' <<< "$input")
+# Empty stdin is not a valid PreToolUse payload. jq would silently accept it
+# and return an empty string for every field — which would make us think the
+# tool_name isn't Bash and allow the call through. Fail closed instead.
+if [[ -z "$input" ]]; then
+  emit_internal_error_deny
+  exit 0
+fi
+
+if ! tool_name=$(jq -r '.tool_name // ""' <<< "$input" 2>/dev/null); then
+  emit_internal_error_deny
+  exit 0
+fi
 [[ "$tool_name" == "Bash" ]] || exit 0
 
-command=$(jq -r '.tool_input.command // ""' <<< "$input")
+if ! command=$(jq -r '.tool_input.command // ""' <<< "$input" 2>/dev/null); then
+  emit_internal_error_deny
+  exit 0
+fi
 
 # Match `gh pr create` only at a shell statement boundary: start of the
 # command string, or immediately after one of `; & | {`. Without this anchor

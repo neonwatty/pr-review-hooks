@@ -117,6 +117,55 @@ run_case "markdown backticks around phrase"        allow "$(json_payload $'git c
 run_case 'prose mentioning $(gh pr create)'        allow "$(json_payload $'git commit -m "the $(gh pr create) form is not used"')"
 
 echo
+echo "Internal-error fail-closed (hook must emit deny instead of crashing)"
+# Malformed JSON input: real jq is available but can't parse. The hook should
+# detect the parse failure and emit the internal-error deny, not crash.
+run_case "malformed JSON input"                    block "this is not JSON"
+run_case "empty stdin"                             block ""
+run_case "truncated JSON payload"                  block '{"tool_name":"Bash","tool_input":'
+
+# Missing jq: use a shim directory prepended to PATH that contains a fake
+# jq which exits non-zero. The shim is only visible to the hook's subshell;
+# the harness keeps using the real jq for its own assertions.
+shim_dir=$(mktemp -d)
+trap 'rm -rf "$shim_dir"' EXIT
+cat > "$shim_dir/jq" <<'SHIM'
+#!/bin/sh
+exit 1
+SHIM
+chmod +x "$shim_dir/jq"
+
+run_case_broken_jq() {
+  local name=$1 expect=$2 payload=$3
+  local out status
+  out=$(PATH="$shim_dir:$PATH" "$hook" <<< "$payload" 2>&1)
+  status=$?
+
+  local got
+  if (( status != 0 )); then
+    got="crash"
+  elif [[ -z "$out" ]]; then
+    got="allow"
+  elif jq -e '.hookSpecificOutput.permissionDecision == "deny"' <<< "$out" >/dev/null 2>&1; then
+    got="block"
+  else
+    got="unknown"
+  fi
+
+  if [[ "$got" == "$expect" ]]; then
+    printf '  \033[32mPASS\033[0m  %s\n' "$name"
+    pass=$((pass + 1))
+  else
+    printf '  \033[31mFAIL\033[0m  %s (expected %s, got %s)\n' "$name" "$expect" "$got"
+    fail=$((fail + 1))
+    failures+=("$name")
+  fi
+}
+
+run_case_broken_jq "jq missing, real PR-create payload"  block "$(json_payload 'gh pr create --title foo')"
+run_case_broken_jq "jq missing, unrelated Bash command"  block "$(json_payload 'ls -la')"
+
+echo
 echo "Known limitations — documented gaps where the hook does NOT block"
 # These cases are intentional misses, pinned as allow-tests so any future
 # tweak to the regex boundary class is a deliberate choice, not an accident.
