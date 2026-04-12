@@ -121,8 +121,8 @@ sudo apt-get install jq  # Debian/Ubuntu
 
 ### `gh pr create --help` is also blocked
 
-The hook's regex matches any `gh pr create` invocation, including `gh pr create --help`. The broad match
-is intentional — no variant should slip through — but it blocks reading help that way.
+The hook treats `gh pr create --help` as a `gh pr create` invocation and blocks it. That's intentional
+— no variant should slip through — but it means reading help that way doesn't work.
 
 **Do not** reach for the `# reviewed` sentinel here. The sentinel is an honor-system signal that the
 toolkit review has actually run on the staged diff; using it just to unblock `--help` trains both humans
@@ -133,6 +133,57 @@ Two workarounds:
 - Run `gh help pr create`. Same help output; the `help` token between `gh` and `pr` keeps it out of the
   hook's regex.
 - Read the docs on the web: <https://cli.github.com/manual/gh_pr_create>.
+
+### The hook doesn't seem to fire at all
+
+Symptom: `gh pr create` runs successfully in Claude Code without ever being blocked, and no reason string
+is shown. This almost always means the hook isn't registered with the Claude Code harness — the script
+can be sitting on disk, executable, with perfectly valid contents, and still do nothing because Claude
+Code never calls it.
+
+Two common causes:
+
+1. **Project-local install (Option A) but the repo isn't open in Claude Code.** The project-local
+   `.claude/settings.json` is only picked up when you open the repo directory *in Claude Code*. Running
+   `claude` from a sibling directory, or working in a worktree that doesn't inherit the settings file,
+   both leave the hook unwired.
+2. **Global install (Option B) but the `hooks` block was never merged into `~/.claude/settings.json`.**
+   Copying `hooks/enforce-pr-review.sh` into `~/.claude/hooks/` isn't enough on its own — Claude Code
+   only runs hooks that are *declared* in a settings file. The `PreToolUse` block from the template
+   `settings.json` in this repo has to be merged (by hand) into your user settings.
+
+The fastest way to check whether the hook is wired is to lean on the intentional `--help` catch above:
+run `gh pr create --help` in Claude Code. If the hook is wired, you'll see the block reason. If the hook
+is *not* wired, `gh` will happily print its help text. It's a free, zero-side-effect wiring test.
+
+If you need a second signal, the hook still works correctly when invoked directly from the shell (see
+[Testing the hook directly](#testing-the-hook-directly) below). If the shell-level test passes but
+Claude Code doesn't block, the hook itself is fine — the gap is in the settings wiring.
+
+### The sentinel looks right but the command is still blocked
+
+The hook recognizes the sentinel as a trailing shell comment with a specific shape: whitespace, then
+`#`, then whitespace, then the literal word `reviewed`, optionally followed by trailing whitespace, at
+the end of the command. It's stricter than it looks, and the failure mode is always the same — the hook
+emits the same deny reason string a second time, even though you think you appended the sentinel
+correctly. Four things to check:
+
+- **Whitespace before the `#`.** `...--body bar#reviewed` is rejected because there's no whitespace
+  between `bar` and `#`. Canonical form: `... --body bar # reviewed`.
+- **Whitespace between `#` and `reviewed`.** `... --body bar #reviewed` (no space after `#`) is rejected.
+  Canonical form: `... --body bar # reviewed`.
+- **The sentinel has to be *trailing*.** `gh pr create # reviewed --title foo` is rejected. See
+  [Why a trailing shell comment?](#why-a-trailing-shell-comment) above for the rationale — put the
+  sentinel after every flag and argument, as the last thing on the command line.
+- **Lowercase only.** `# Reviewed` and `# REVIEWED` are both rejected. The hook matches the literal
+  lowercase word `reviewed`, not a case-insensitive variant. That's deliberate: the exact form acts as
+  a small ritual that signals intentionality — a user or LLM that types `# Reviewed` (natural English
+  capitalization) and gets bypassed has treated the sentinel as "close enough," which quietly erodes
+  the honor-system contract the whole hook depends on. The test suite pins lowercase-only as a hard
+  contract (`hooks/test.sh` has explicit `# Reviewed` and `# REVIEWED` must-block cases).
+
+Canonical form: ` # reviewed` with a single leading space, a single space between `#` and `reviewed`,
+and nothing after it.
 
 ## Layout
 
