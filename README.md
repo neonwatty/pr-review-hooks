@@ -106,6 +106,30 @@ echo '{"tool_name":"Bash","tool_input":{"command":"gh pr create --title foo --bo
   | ./hooks/enforce-pr-review.sh
 ```
 
+## Troubleshooting
+
+### `jq: command not found`
+
+The hook shells out to `jq` to parse the PreToolUse JSON payload and to emit the deny response. With
+`set -euo pipefail` at the top of the script, a missing `jq` causes the hook to exit non-zero and every
+`Bash` tool call will fail until it's installed. Fix it with your package manager:
+
+```sh
+brew install jq          # macOS
+sudo apt-get install jq  # Debian/Ubuntu
+```
+
+### `gh pr create --help` is also blocked
+
+The hook matches any command shape of the form `gh pr create` via the regex
+`gh[[:space:]]+pr[[:space:]]+create`, which means `gh pr create --help` trips the same block as a real PR
+creation. That's intentional — the match is deliberately broad so no variant slips through — but it means
+you can't read the help text without the sentinel. Two workarounds:
+
+- Append ` # reviewed` to the help invocation: `gh pr create --help # reviewed`. The shell strips the
+  comment before `gh` sees it, so `--help` behaves normally.
+- Or read the docs on the web: <https://cli.github.com/manual/gh_pr_create>.
+
 ## Layout
 
 ```
