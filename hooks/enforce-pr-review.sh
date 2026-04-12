@@ -57,7 +57,13 @@ if ! tool_name=$(jq -r '.tool_name // ""' <<< "$input" 2>/dev/null); then
 fi
 [[ "$tool_name" == "Bash" ]] || exit 0
 
-if ! command=$(jq -r '.tool_input.command // ""' <<< "$input" 2>/dev/null); then
+# For a Bash tool call, .tool_input.command MUST be a string. A non-string
+# value (array, object, number) is an unexpected schema we can't safely match
+# against — jq -r would stringify it in ways that either accidentally match
+# the regex for the wrong reason, or silently allow a crafted command to slip
+# through. Fail closed on any type mismatch. Using jq's error() to trip the
+# if! branch keeps the fail-closed path unified with the other jq guards.
+if ! command=$(jq -r 'if (.tool_input.command | type) == "string" then .tool_input.command else error("command not a string") end' <<< "$input" 2>/dev/null); then
   emit_internal_error_deny
   exit 0
 fi

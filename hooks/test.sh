@@ -117,18 +117,32 @@ run_case "markdown backticks around phrase"        allow "$(json_payload $'git c
 run_case 'prose mentioning $(gh pr create)'        allow "$(json_payload $'git commit -m "the $(gh pr create) form is not used"')"
 
 echo
-echo "Internal-error fail-closed (hook must emit deny instead of crashing)"
-# Malformed JSON input: real jq is available but can't parse. The hook should
-# detect the parse failure and emit the internal-error deny, not crash.
+echo "Internal-error fail-closed: malformed payloads"
+# Real jq is available but can't parse. The hook should detect the parse
+# failure and emit the internal-error deny, not crash.
 run_case "malformed JSON input"                    block "this is not JSON"
 run_case "empty stdin"                             block ""
 run_case "truncated JSON payload"                  block '{"tool_name":"Bash","tool_input":'
 
-# Missing jq: use a shim directory prepended to PATH that contains a fake
-# jq which exits non-zero. The shim is only visible to the hook's subshell;
-# the harness keeps using the real jq for its own assertions.
+echo
+echo "Internal-error fail-closed: unexpected .tool_input.command types"
+# For a Bash tool call, the command field MUST be a string. Non-string types
+# would stringify through jq -r in ways that either accidentally match the
+# regex for the wrong reason or silently let a crafted payload slip through.
+# Pin all four non-string types as hard blocks.
+run_case "command as array"   block '{"tool_name":"Bash","tool_input":{"command":["gh","pr","create"]}}'
+run_case "command as object"  block '{"tool_name":"Bash","tool_input":{"command":{"nested":"gh pr create"}}}'
+run_case "command as number"  block '{"tool_name":"Bash","tool_input":{"command":42}}'
+run_case "command as null"    block '{"tool_name":"Bash","tool_input":{"command":null}}'
+
+echo
+echo "Internal-error fail-closed: broken jq"
+# Simulate jq being broken via a PATH-prepended shim that exits 1. This
+# tests the "jq is on PATH but failing" path, which converges with the
+# "jq missing entirely" case — both end up in the hook's `if ! jq ...`
+# guard. The shim is only visible to the hook's subshell; the harness
+# keeps using the real jq (from the parent's PATH) for its own assertions.
 shim_dir=$(mktemp -d)
-trap 'rm -rf "$shim_dir"' EXIT
 cat > "$shim_dir/jq" <<'SHIM'
 #!/bin/sh
 exit 1
@@ -162,8 +176,12 @@ run_case_broken_jq() {
   fi
 }
 
-run_case_broken_jq "jq missing, real PR-create payload"  block "$(json_payload 'gh pr create --title foo')"
-run_case_broken_jq "jq missing, unrelated Bash command"  block "$(json_payload 'ls -la')"
+run_case_broken_jq "broken jq, real PR-create payload"  block "$(json_payload 'gh pr create --title foo')"
+run_case_broken_jq "broken jq, unrelated Bash command"  block "$(json_payload 'ls -la')"
+
+# Explicit cleanup rather than a trap — a trap would clobber any future
+# EXIT handler added elsewhere in this file.
+rm -rf "$shim_dir"
 
 echo
 echo "Known limitations — documented gaps where the hook does NOT block"
