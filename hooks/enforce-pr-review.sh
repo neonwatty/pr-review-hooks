@@ -34,7 +34,43 @@ tool_name=$(jq -r '.tool_name // ""' <<< "$input")
 [[ "$tool_name" == "Bash" ]] || exit 0
 
 command=$(jq -r '.tool_input.command // ""' <<< "$input")
-[[ "$command" =~ gh[[:space:]]+pr[[:space:]]+create ]] || exit 0
+
+# Match `gh pr create` only at a shell statement boundary: start of the
+# command string, or immediately after one of `; & | {`. Without this anchor
+# the regex fires on unrelated commands whose arguments happen to quote the
+# literal phrase — e.g. a `git commit` whose message body mentions the phrase
+# in prose, or `grep "gh pr create" README.md`.
+#
+# The boundary class is tighter than it looks. Each character had to survive
+# the same test: does its shell meaning dominate its prose meaning? `{ ; & |`
+# qualify — they're rare in prose about shell commands. The following
+# characters failed that test and are deliberately EXCLUDED:
+#
+# - Newline. A HEREDOC or PR body that starts a line with `gh pr create` in
+#   prose (documenting the hook itself, for instance) is far more common in
+#   this codebase than a real multi-line shell script Claude would execute,
+#   where commands are almost always chained with `&&` or `;` anyway.
+# - Backtick. Markdown inline-code backticks in commit bodies look identical
+#   to shell command-substitution backticks in the raw tool_input.command
+#   string. The legacy `` `...` `` form is obsolete anyway.
+# - Open paren. Same reasoning: `$(gh pr create)` in prose describing a shell
+#   command is common (see this very comment block), and is indistinguishable
+#   from a real `$(...)` command substitution. Claude runs `gh pr create`
+#   directly, not inside command substitution, so dropping `(` costs nothing
+#   in practice.
+#
+# Known limitations (intentional misses, each pinned by an allow-test in
+# hooks/test.sh so any future "fix" is a deliberate choice):
+#
+# - Env-var prefix form:        `GH_TOKEN=x gh pr create ...`
+# - Shell keywords:              `if true; then gh pr create ...; fi`
+# - Command substitution form:  `$(gh pr create ...)` / `` `gh pr create` ``
+#
+# For all of these, the fallback is the same as any other edge case: the user
+# tells Claude to append the ` # reviewed` sentinel after actually running
+# the review.
+pr_create_re=$'(^|[;&|{])[[:space:]]*gh[[:space:]]+pr[[:space:]]+create'
+[[ "$command" =~ $pr_create_re ]] || exit 0
 
 # Escape hatch: Claude has run the review and is re-attempting.
 #
