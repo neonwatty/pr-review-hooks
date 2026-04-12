@@ -8,6 +8,54 @@ The goal: make rigorous pre-PR review the path of least resistance. When Claude 
 blocks the call and hands Claude a reason string telling it exactly what to do — run the toolkit, address
 findings, then re-issue the same `gh pr create` command with a trailing sentinel.
 
+## Scope and limitations
+
+This hook is **a friction-adding nudge for Claude Code on your own projects**, not a bypass-proof PR
+review gate. It's worth understanding what that means before you install it.
+
+### What it does well
+
+- Intercepts the `gh pr create` invocation shapes Claude actually emits (bare, `cd subdir && ...`,
+  `;`-chained, piped) and forces the toolkit to run first.
+- **Fails closed** when things go wrong: if `jq` is missing or the PreToolUse payload is malformed, the
+  hook emits a hardcoded deny JSON on every Bash call with a clear explanation, rather than crashing
+  and silently disabling the gate.
+- **Stateless.** No session files, no cross-invocation bookkeeping, no Stop-hook safety net. Drop the
+  script and settings block into any repo and it works.
+- **Tested.** `hooks/test.sh` pins 39 regression cases covering every shape the hook is expected to
+  block, allow, or reject — including sentinel misuse, documented known limitations, and the
+  fail-closed internal-error paths (malformed payloads, unexpected `.tool_input.command` types,
+  broken jq). Wired into CI via `.github/workflows/test.yml`.
+
+### What it does NOT do
+
+- **Not a security control.** The sentinel is an honor-system signal. A determined or adversarial agent
+  can bypass the check today by chaining any command after a real PR-create invocation — e.g.
+  `gh pr create ...; echo done # reviewed`. The hook works *because Claude follows the block-message
+  instructions*, not because bash enforces anything.
+- **`gh`-specific.** No coverage of `glab` (GitLab), direct `git push` that opens PRs via server-side
+  hooks, web-UI PR creation, or any other path to a pull request. The hook is invisible to non-`gh`
+  flows.
+- **Claude-specific block-message format.** The hook emits a PreToolUse JSON structure that matches
+  Claude Code's hook contract. Other coding agents with different contracts need different wiring.
+- **Requires the `pr-review-toolkit` plugin installed on Claude Code.** The block message points Claude
+  at `/pr-review-toolkit:review-pr all`; without that plugin, the block still fires but the remediation
+  instruction is a dead end.
+- **Bash-dependent.** Windows users need Git Bash or WSL.
+
+### Known regex gaps
+
+Each of these is pinned as an allow-test in `hooks/test.sh` so any future "fix" is a deliberate choice
+rather than a drive-by regex tweak:
+
+- Env-var prefix form: `GH_TOKEN=x gh pr create ...`
+- Shell keyword bodies: `if true; then gh pr create ...; fi`
+- Command substitution forms: `$(gh pr create ...)` and the legacy backtick form
+
+Claude essentially never uses any of these for PR creation. If it ever does, the fallback is the same
+as any other edge case — the user asks Claude to append ` # reviewed` after actually running the
+review.
+
 ## How it works
 
 1. **PreToolUse hook on `Bash`.** Every `Bash` tool call is passed to `hooks/enforce-pr-review.sh` on stdin
