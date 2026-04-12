@@ -2,11 +2,9 @@
 
 A single PreToolUse hook for [Claude Code](https://docs.claude.com/en/docs/claude-code) that forces
 the [`pr-review-toolkit`](https://github.com/anthropics/claude-code) plugin to run before Claude can
-open a pull request. When Claude tries, the hook blocks the call and hands Claude a reason string
-telling it exactly what to do — run the toolkit, address findings, then re-issue the same command
-with a trailing sentinel.
-
-Goal: make rigorous pre-PR review the path of least resistance.
+open a pull request. The goal is to make rigorous pre-PR review the path of least resistance: when
+Claude tries, the hook blocks the call and hands Claude a reason string telling it exactly what to
+do — run the toolkit, address findings, then re-issue the same command with a trailing sentinel.
 
 ## Scope and limitations
 
@@ -15,8 +13,8 @@ gate. The difference matters before you install it.
 
 **What it does well:**
 
-- Intercepts every PR-create invocation shape Claude actually emits (bare, `cd && ...`, chained,
-  piped) and forces the toolkit to run first.
+- Intercepts every PR-create invocation shape Claude actually emits (bare, `cd subdir && ...`,
+  `;`-chained, piped) and forces the toolkit to run first.
 - Fails closed on error: missing `jq`, malformed payloads, and unexpected command types all emit a
   hardcoded deny rather than crashing and silently disabling the gate.
 - Stateless: no session files, no cross-invocation bookkeeping. Drop the script and settings block
@@ -34,8 +32,8 @@ gate. The difference matters before you install it.
   instruction is a dead end.
 - **Bash-dependent.** Windows needs Git Bash or WSL.
 
-**Known regex gaps** — each pinned as an allow-test in `hooks/test.sh` so any future "fix" is a
-deliberate choice:
+**Known regex gaps:** each of these is pinned as an allow-test in `hooks/test.sh` so any future
+"fix" is a deliberate choice.
 
 - Env-var prefix: `GH_TOKEN=x gh pr create ...`
 - Shell keyword bodies: `if true; then gh pr create ...; fi`
@@ -50,7 +48,8 @@ Claude essentially never uses these forms for PR creation.
 2. **Filter.** The hook exits `0` (allow) for anything that isn't a real PR-create invocation.
 3. **Block.** For a matching command, the hook emits a `permissionDecision: "deny"` JSON object with
    a detailed reason. Claude Code shows that reason to the model, so Claude knows exactly what to do
-   next.
+   next. The exact text of the block message lives in `hooks/enforce-pr-review.sh` — read it there
+   rather than duplicating it here.
 4. **Escape hatch.** If the command ends in the literal trailing shell comment ` # reviewed`, the
    hook allows it through. This is Claude's signal that the toolkit has actually been run and
    findings addressed.
@@ -91,12 +90,17 @@ chmod +x "$HOME/.claude/hooks/enforce-pr-review.sh"
 
 ## Testing the hook directly
 
-The hook reads JSON from stdin, so you can exercise it from the shell without launching Claude Code:
+The hook reads JSON from stdin, so you can exercise it from the shell without launching Claude Code.
+Allow paths produce silent exit 0 with no output; only blocks print JSON:
 
 ```sh
+# block: prints deny JSON, exit 0
 echo '{"tool_name":"Bash","tool_input":{"command":"gh pr create --title foo"}}' \
   | ./hooks/enforce-pr-review.sh
-# → deny JSON on stdout, exit 0
+
+# allow: silent exit 0, no output
+echo '{"tool_name":"Bash","tool_input":{"command":"gh pr create --title foo # reviewed"}}' \
+  | ./hooks/enforce-pr-review.sh
 ```
 
 For full coverage, run `./hooks/test.sh` (39 cases, also runs on every PR via CI).
@@ -113,11 +117,11 @@ brew install jq          # macOS
 sudo apt-get install jq  # Debian/Ubuntu
 ```
 
-### The help variant is also blocked
+### `gh pr create --help` is also blocked
 
-The hook treats `--help` as a real PR-create invocation and blocks it. Do not reach for the
-`# reviewed` sentinel to unblock it — that trains bypass behavior. Instead, run `gh help pr create`
-(the token order keeps it out of the hook's regex) or read the docs at
+The hook treats `gh pr create --help` as a real PR-create invocation and blocks it. Do not reach
+for the `# reviewed` sentinel to unblock it — that trains bypass behavior. Instead, run
+`gh help pr create` (the token order keeps it out of the hook's regex) or read the docs at
 <https://cli.github.com/manual/gh_pr_create>.
 
 ### The hook doesn't seem to fire at all
