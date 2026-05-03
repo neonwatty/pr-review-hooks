@@ -1,5 +1,7 @@
 # pr-review-hooks
 
+[![Discord](https://img.shields.io/badge/Discord-Join%20Server-7289da?style=flat&logo=discord&logoColor=white)](https://discord.gg/7xsxU4ZG6A)
+
 A single PreToolUse hook for [Claude Code](https://docs.claude.com/en/docs/claude-code) that forces
 the [`pr-review-toolkit`](https://github.com/anthropics/claude-code) plugin to run before Claude can
 open a pull request. The goal is to make rigorous pre-PR review the path of least resistance: when
